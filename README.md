@@ -79,10 +79,14 @@ This is the "hard data" behind the product, and it runs as a containerised batch
 
 *Tech: Scrapy, Cohere (rerank + embeddings), Google Books / Open Library APIs, PostgreSQL, Podman.*
 
-### 3. `skills-api/` — the REST API
+### 3. `skills-api/` — the REST API (B2B expansion)
 A lightweight, high-performance **FastAPI** service that exposes the profession and skills data over
 clean HTTP endpoints, with automatic interactive documentation (Swagger / ReDoc). It reads through
 `proskiro-tools`, so it shares the exact same models and queries as the website.
+
+**This is a business-to-business offering, not a public consumer endpoint.** It's built to license
+Proskiro's data to partners; consumers never hit it directly — they use the `django` website. It's a
+deliberate groundwork investment for a future B2B revenue stream.
 
 *Tech: FastAPI, Python, PostgreSQL (via proskiro-tools).*
 
@@ -94,6 +98,11 @@ public profession pages and also runs the marketing side of the business:
 - **AI-written blog** — SEO articles are drafted by **Anthropic Claude** against a strict brand voice, rendered to HTML, and staged for review.
 - **Lead-magnet funnel** — visitors request a personalised skills "roadmap" for a target job; the app builds a staged, email-ready plan and delivers it.
 - **Email lifecycle & analytics** — automated follow-up sequences via **AWS SES**, with open/click tracking, attribution, and conversion reporting.
+
+> **Built with AI-assisted development.** This application was developed with heavy use of AI coding
+> tools (LLM pair-programming) throughout — architecture, implementation, tests, and docs — used
+> deliberately to ship quickly while keeping the code reviewed, typed, linted, and tested. This is
+> distinct from the AI *features* the product ships (Claude-generated content, AI images).
 
 *Tech: Django 5, Wagtail CMS, Anthropic Claude, AWS SES & S3, Gunicorn, Docker.*
 
@@ -111,7 +120,7 @@ into separate `staging` and `production` environments with reusable modules.
 2. **A visitor** lands on a profession page on the `django` site (often via an AI-written blog article built for SEO).
 3. `django` reads the profession and its skills through `proskiro-tools`, and renders the page.
 4. The visitor requests a **personalised roadmap**; `django` builds it and sends it via **SES**, then runs a tracked follow-up email sequence.
-5. Programmatic consumers can hit the same data directly through the `skills-api` REST endpoints.
+5. Separately, **B2B partners** (a future expansion, not end users) can license the same data programmatically through the `skills-api` REST endpoints.
 6. All of it runs on infrastructure defined in `infra`.
 
 ---
@@ -131,6 +140,6 @@ into separate `staging` and `production` environments with reusable modules.
 |---|---|---|
 | `proskiro-tools` | Shared models, DB layer, queries | Pydantic v2, SQLAlchemy 2.0 |
 | `skills` | Data pipeline (books + taxonomy) | Scrapy, Cohere, Google Books / Open Library |
-| `skills-api` | REST API over the data | FastAPI |
-| `django` | Public site, CMS, AI blog, email funnel | Django, Wagtail, Claude, AWS SES/S3 |
+| `skills-api` | REST API over the data (B2B expansion, not consumer-facing) | FastAPI |
+| `django` | Public site, CMS, AI blog, email funnel (AI-assisted build) | Django, Wagtail, Claude, AWS SES/S3 |
 | `infra` | Cloud infrastructure | Terraform, AWS |
