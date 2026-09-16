@@ -16,6 +16,14 @@ each project is and — more importantly — **how they work together**.
 ## The big picture
 
 ```
+                 ┌────────────────────────────────────────────────────────┐
+                 │   infra/  (Terraform IaC)                               │
+                 │   Provisions the AWS foundation everything runs on:     │
+                 │   VPC & networking · RDS (Postgres) · ECS (compute) ·   │
+                 │   S3 (static/media) · SES (email) · Secrets Manager     │
+                 └────────────────────────────────────────────────────────┘
+                              │  provisions
+                              ▼
         ESCO occupations + O*NET taxonomy (external open data)
                               │
                               ▼
@@ -43,16 +51,13 @@ each project is and — more importantly — **how they work together**.
 │  FastAPI REST API   │                     │  Public site + CMS +    │
 │  (fast read access) │                     │  AI blog + email funnel │
 └────────────────────┘                     └─────────────────────────┘
-                              ▲
-                              │  provisions the cloud it all runs on
-                 ┌───────────────────────────┐
-                 │   infra/  (Terraform IaC)  │
-                 └───────────────────────────┘
 ```
 
 The key design decision: **one database, one shared data layer, many consumers.** The data pipeline
 writes; the web app and API read. Neither the API nor the website re-implements how a "profession"
-or a "skill" is shaped — that lives once in `proskiro-tools` and everything imports it.
+or a "skill" is shaped — that lives once in `proskiro-tools` and everything imports it. Underneath
+all of it, `infra` provisions and wires together the actual AWS services every other project depends
+on to run.
 
 ---
 
@@ -75,7 +80,8 @@ The engine that builds the dataset. For every skill in the platform it queries m
 keyword matches. It also aligns the European (ESCO) and US (O\*NET) job taxonomies using AI
 embeddings so job titles can be enriched across both standards.
 
-This is the "hard data" behind the product, and it runs as a containerised batch job.
+This is the "hard data" behind the product, and it runs as a containerised batch job on an automated
+schedule, so the dataset keeps itself current without manual intervention.
 
 *Tech: Scrapy, Cohere (rerank + embeddings), Google Books / Open Library APIs, PostgreSQL, Podman.*
 
@@ -107,21 +113,31 @@ public profession pages and also runs the marketing side of the business:
 *Tech: Django 5, Wagtail CMS, Anthropic Claude, AWS SES & S3, Gunicorn, Docker.*
 
 ### 5. `infra/` — the infrastructure
-**Terraform** infrastructure-as-code that provisions the AWS environment the platform runs on, split
-into separate `staging` and `production` environments with reusable modules.
+**Terraform** infrastructure-as-code that provisions the entire AWS foundation the platform runs on,
+split into separate `staging` and `production` environments with reusable modules. It's the layer
+underneath every other project — nothing above it runs without it.
 
-*Tech: Terraform, AWS.*
+It provisions:
+
+- **VPC & networking** — the private network the platform's cloud resources live in, with security groups controlling exactly what can talk to what.
+- **RDS (PostgreSQL)** — the shared, private database behind `proskiro-tools`, `django`, and `skills-api`. Not publicly reachable; only trusted resources inside the VPC can connect.
+- **ECS** — the container compute platform that runs the `django` application in production.
+- **S3** — object storage for static assets and user/media uploads.
+- **SES** — the email-sending infrastructure behind the roadmap delivery and lifecycle email sequences.
+- **Secrets Manager** — secure storage for credentials and secrets, consumed by the application at runtime.
+
+*Tech: Terraform, AWS (VPC, RDS, ECS, S3, SES, Secrets Manager).*
 
 ---
 
 ## How a request actually flows
 
-1. **Offline:** the `skills` pipeline populates PostgreSQL with professions, ranked skills, and AI-vetted book recommendations.
+0. **Underneath everything:** `infra` has already provisioned the VPC, RDS database, ECS compute, S3, SES, and secrets that the rest of the stack runs on.
+1. **Offline:** the `skills` pipeline runs automatically on a schedule, populating PostgreSQL with professions, ranked skills, and AI-vetted book recommendations.
 2. **A visitor** lands on a profession page on the `django` site (often via an AI-written blog article built for SEO).
 3. `django` reads the profession and its skills through `proskiro-tools`, and renders the page.
 4. The visitor requests a **personalised roadmap**; `django` builds it and sends it via **SES**, then runs a tracked follow-up email sequence.
 5. Separately, **B2B partners** (a future expansion, not end users) can license the same data programmatically through the `skills-api` REST endpoints.
-6. All of it runs on infrastructure defined in `infra`.
 
 ---
 
@@ -139,7 +155,7 @@ into separate `staging` and `production` environments with reusable modules.
 | Project | Role | Core tech |
 |---|---|---|
 | `proskiro-tools` | Shared models, DB layer, queries | Pydantic v2, SQLAlchemy 2.0 |
-| `skills` | Data pipeline (books + taxonomy) | Scrapy, Cohere, Google Books / Open Library |
+| `skills` | Data pipeline (books + taxonomy), runs on an automated schedule | Scrapy, Cohere, Google Books / Open Library |
 | `skills-api` | REST API over the data (B2B expansion, not consumer-facing) | FastAPI |
 | `django` | Public site, CMS, AI blog, email funnel (AI-assisted build) | Django, Wagtail, Claude, AWS SES/S3 |
-| `infra` | Cloud infrastructure | Terraform, AWS |
+| `infra` | Provisions the AWS foundation (VPC, RDS, ECS, S3, SES, Secrets Manager) | Terraform, AWS |
