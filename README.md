@@ -15,42 +15,29 @@ each project is and — more importantly — **how they work together**.
 
 ## The big picture
 
-```
-                 ┌────────────────────────────────────────────────────────┐
-                 │   infra/  (Terraform IaC)                               │
-                 │   Provisions the AWS foundation everything runs on:     │
-                 │   VPC & networking · RDS (Postgres) · ECS (compute) ·   │
-                 │   S3 (static/media) · SES (email) · Secrets Manager     │
-                 └────────────────────────────────────────────────────────┘
-                              │  provisions
-                              ▼
-        ESCO occupations + O*NET taxonomy (external open data)
-                              │
-                              ▼
-   ┌──────────────────────────────────────────────────────────┐
-   │  skills/          Data pipeline (offline / batch)         │
-   │  Scrapes, enriches, and semantically ranks books & skills │
-   └──────────────────────────────────────────────────────────┘
-                              │  writes
-                              ▼
-                 ┌───────────────────────────┐
-                 │   PostgreSQL on AWS RDS    │  ◄── single source of truth
-                 └───────────────────────────┘
-                              ▲
-                              │  reads (shared models + DB layer)
-                 ┌───────────────────────────┐
-                 │   proskiro-tools/          │  ◄── shared core library
-                 │   models · db · queries    │
-                 └───────────────────────────┘
-                       ▲                ▲
-             imports   │                │   imports
-        ┌──────────────┘                └──────────────┐
-        │                                               │
-┌────────────────────┐                     ┌─────────────────────────┐
-│  skills-api/        │                     │  django/                │
-│  FastAPI REST API   │                     │  Public site + CMS +    │
-│  (fast read access) │                     │  AI blog + email funnel │
-└────────────────────┘                     └─────────────────────────┘
+```mermaid
+graph TD
+    infra["<b>infra/</b><br/>Terraform IaC<br/>Provisions VPC, RDS, ECS, S3, SES, Secrets Manager"]
+    data["ESCO + O*NET taxonomy<br/><i>(external open data)</i>"]
+    skills["<b>skills/</b><br/>Data pipeline (offline / batch)<br/>Scrapes, enriches &amp; semantically ranks books &amp; skills"]
+    db[("PostgreSQL on AWS RDS<br/><i>single source of truth</i>")]
+    tools["<b>proskiro-tools/</b><br/>Shared core library<br/>models · db · queries"]
+    api["<b>skills-api/</b><br/>FastAPI REST API<br/>(B2B expansion)"]
+    django["<b>django/</b><br/>Public site + CMS +<br/>AI blog + email funnel"]
+
+    infra -->|provisions| skills
+    data --> skills
+    skills -->|writes| db
+    db -->|reads| tools
+    tools -->|imports| api
+    tools -->|imports| django
+
+    style infra fill:#4338ca,stroke:#1e1b4b,stroke-width:2px,color:#ffffff
+    style db fill:#b45309,stroke:#78350f,stroke-width:2px,color:#ffffff
+    style tools fill:#15803d,stroke:#14532d,stroke-width:2px,color:#ffffff
+    style api fill:#b91c1c,stroke:#7f1d1d,stroke-width:2px,color:#ffffff
+    style django fill:#1d4ed8,stroke:#1e3a8a,stroke-width:2px,color:#ffffff
+    style data fill:#f1f5f9,stroke:#334155,stroke-width:2px,color:#0f172a
 ```
 
 The key design decision: **one database, one shared data layer, many consumers.** The data pipeline
@@ -85,6 +72,75 @@ schedule, so the dataset keeps itself current without manual intervention.
 
 *Tech: Scrapy, Cohere (rerank + embeddings), Google Books / Open Library APIs, PostgreSQL, Podman.*
 
+<p align="center"><img src="assets/semantic.png" alt="Semantic reranking before/after" width="850"></p>
+<p align="center"><em>Semantic reranking in action — raw keyword matches (left) vs. the AI-reranked, genuinely
+relevant results actually shown to users (right).</em></p>
+
+<details>
+<summary><strong>Sample pipeline run</strong> (real dry-run against production data, click to expand)</summary>
+
+```
+Proskiro skills pipeline — sample run (dry-run, no DB writes)
+Command: python -m my_services.search_books_for_skills --max-pairs=8 --featured-only --force-refresh --dry-run
+
+============================================================
+Skill: hand gestures & signals  (for Notary)
+============================================================
+  Query: hand gestures signals notary — The meanings of different hand gestures...
+  google_books: 3 books after hard filters
+    Dictionary of Gestures                              relevance: 0.69
+    Hand Gesture Recognition for Dumb and Blind          relevance: 0.00
+    Greeting by Gesture and the Gesture-Language         relevance: 0.00
+  [RELEVANCE] Filtered to 1 book (score >= 0.3)
+  ✔ Matched: "Dictionary of Gestures" (2023)
+
+============================================================
+Skill: communication & correspondence  (for Patent Engineer)
+============================================================
+  Query: communication correspondence patent engineer — Exchanging and conveying...
+  [FALLBACK] Only 1 book from direct match, broadening search...
+    [POOR DESC] Basics of Communication in Management
+    [RED FLAG] Mass Communication and Journalism in the Digital Age
+    [WRONG OCCUPATION] The Administrative Dental Assistant - E-Book
+    [WRONG OCCUPATION] Navy Staff Officer's Guide
+  google_books: 5 books after fallback
+    Between SIGN and SILENCE: The Secret Language...    relevance: 0.17
+    COMMUNICATION AND SOFT SKILLS THROUGH ENGLISH        relevance: 0.10
+    The Preparator's Handbook                            relevance: 0.02
+  [RELEVANCE] Filtered to 1 book (score >= 0.16)
+  ✔ Matched: "Between SIGN and SILENCE: The Secret Language of Human
+             Relations" (2023)
+
+============================================================
+Skill: communication & correspondence  (for Social Work Assistant)
+============================================================
+  Query: communication correspondence social work assistant — Exchanging...
+  [FALLBACK] Only 1 book from direct match, broadening search...
+    [POOR DESC] Basics of Communication in Management
+    [WRONG OCCUPATION] Artificial Intelligence and Knowledge Processing
+    [RED FLAG] Mass Communication and Journalism in the Digital Age
+    [WRONG OCCUPATION] Enhancing Resilience in Complex Systems
+    [WRONG OCCUPATION] The Administrative Dental Assistant - E-Book
+    [WRONG OCCUPATION] Navy Staff Officer's Guide
+  google_books: 3 books after fallback
+    COMMUNICATION AND SOFT SKILLS THROUGH ENGLISH        relevance: 0.23
+    Between SIGN and SILENCE: The Secret Language...     relevance: 0.23
+    The Preparator's Handbook                            relevance: 0.02
+  [RELEVANCE] Filtered to 2 books (score >= 0.16)
+  ✔ Matched: "COMMUNICATION AND SOFT SKILLS THROUGH ENGLISH" (2025)
+  ✔ Matched: "Between SIGN and SILENCE: The Secret Language of Human
+             Relations" (2023)
+
+------------------------------------------------------------
+Summary: 3 of 8 skill–occupation pairs processed in this sample
+yielded matched books after hard filters, quality gates, and
+semantic reranking. The other 5 pairs were correctly rejected —
+either no candidates cleared the quality bar, or none scored
+above the relevance threshold.
+```
+
+</details>
+
 ### 3. `skills-api/` — the REST API (B2B expansion)
 A lightweight, high-performance **FastAPI** service that exposes the profession and skills data over
 clean HTTP endpoints, with automatic interactive documentation (Swagger / ReDoc). It reads through
@@ -95,6 +151,9 @@ Proskiro's data to partners; consumers never hit it directly — they use the `d
 deliberate groundwork investment for a future B2B revenue stream.
 
 *Tech: FastAPI, Python, PostgreSQL (via proskiro-tools).*
+
+<p align="center"><img src="assets/skills-api.png" alt="skills-api interactive docs" width="850"></p>
+<p align="center"><em>Auto-generated interactive API documentation, ready for partner integration.</em></p>
 
 ### 4. `django/` — the public website and growth engine
 The face of Proskiro, and the largest application. It's a **Django + Wagtail** site that serves the
@@ -112,6 +171,30 @@ public profession pages and also runs the marketing side of the business:
 
 *Tech: Django 5, Wagtail CMS, Anthropic Claude, AWS SES & S3, Gunicorn, Docker.*
 
+<p align="center">
+  <img src="assets/homepage.png" alt="Proskiro homepage" width="410">
+  <img src="assets/profession-1.png" alt="Profession page" width="410">
+</p>
+<p align="center"><em>The public homepage and a profession page — ranked, book-backed skills for a given career.</em></p>
+
+<p align="center"><img src="assets/profession-2.png" alt="Profession page skill detail" width="850"></p>
+<p align="center"><em>Drilling into a skill: star-rated importance and the AI-vetted books recommended for it.</em></p>
+
+<p align="center">
+  <img src="assets/blogs.png" alt="Blog listing" width="410">
+  <img src="assets/blog-editor.png" alt="Wagtail blog editor" width="410">
+</p>
+<p align="center"><em>The public blog, and the Wagtail editor where AI-drafted articles are reviewed before publishing.</em></p>
+
+<p align="center">
+  <img src="assets/roadmap.png" alt="Personalised skills roadmap email" width="410">
+  <img src="assets/sales-letter.png" alt="Lead-magnet landing page" width="410">
+</p>
+<p align="center"><em>The personalised roadmap a visitor receives, and the landing page that drives them into the funnel.</em></p>
+
+<p align="center"><img src="assets/email-analytics.png" alt="Email analytics dashboard" width="850"></p>
+<p align="center"><em>Email lifecycle analytics — open/click tracking and conversion attribution for the roadmap funnel.</em></p>
+
 ### 5. `infra/` — the infrastructure
 **Terraform** infrastructure-as-code that provisions the entire AWS foundation the platform runs on,
 split into separate `staging` and `production` environments with reusable modules. It's the layer
@@ -127,6 +210,30 @@ It provisions:
 - **Secrets Manager** — secure storage for credentials and secrets, consumed by the application at runtime.
 
 *Tech: Terraform, AWS (VPC, RDS, ECS, S3, SES, Secrets Manager).*
+
+---
+
+## Test coverage
+
+Each project ships with its own automated test suite (unit tests, not requiring any live external
+services), and `django` also runs its suite plus linting on every push via GitHub Actions.
+
+<details>
+<summary><strong>Test suite run</strong> (real local run across all three testable projects, click to expand)</summary>
+
+```
+proskiro-tools   pytest -v -m "not integration"
+  50 passed, 5 deselected in 0.04s
+
+skills           pytest -v
+  20 passed in 0.16s
+
+django           python manage.py test --verbosity=2
+  Ran 272 tests in 19.204s
+  OK
+```
+
+</details>
 
 ---
 
