@@ -113,6 +113,47 @@ schedule, so the dataset keeps itself current without manual intervention.
 *Tech: Scrapy, Cohere (rerank + embeddings), Google Books / Open Library APIs, PostgreSQL, Podman.*
 
 <details>
+<summary><strong>Design highlight:</strong> the book-matching pipeline's cascading fallback strategy</summary>
+
+```
+Pipeline:
+1. Fetch skills from DB (knowledge skills with descriptions, leaf nodes only)
+2. For each skill:
+   a. PHASE 1 - Google Books: 3 query variants → hard filters → semantic rerank → top 5
+   b. PHASE 2 - Open Library: 3 query variants → dedup against Google's final 5 →
+      hard filters (no description required) → description enrichment waterfall
+      (Google Books ISBN lookup → OL Works API → synthetic) → semantic rerank → top 5
+3. Filter books through quality gates:
+   - Publication year >= min_year (default: current_year - 6)
+   - Must have ISBN (for Amazon linking)
+   - Must have title, authors, and description (Google) or title/authors (Open Library pre-enrichment)
+   - English language only
+   - Exclude fiction based on subject indicators
+   - Spam title detection (filters SEO-stuffed titles with unrelated topics)
+   - Semantic similarity check (skill description vs book title+description)
+4. Fallback strategies (cascading, if < 3 books found):
+   a. Occupation fallback: Remove occupation from query (generic search)
+   b. Year fallback: Expand to older books (current_year - 8)
+   c. Broader skill fallback: Search parent skill category
+   d. Broader + year fallback: Parent skill with books >= 2012
+   (Each fallback uses lower relevance threshold: 0.16 vs 0.3)
+5. Rank filtered books using book_ranking.py scoring
+6. Persist top 5 books per source to DB with skill linkage
+```
+
+Refresh optimisation (applies on every run, no extra flags needed):
+
+- **Revalidation skip** — before hitting any external API for a pair, the DB is queried to count how
+  many of its existing matched books still pass today's year gate and have an ISBN. If enough already
+  qualify, a fresh `book_search_attempts` record is written and the pair is skipped with zero API or
+  Cohere calls.
+- **Extended window for dead pairs** — pairs that have accumulated 2+ zero-result attempts get their
+  freshness window automatically extended from 90 to 180 days via an inline SQL `CASE` expression, and
+  the window self-corrects back to 90 days the moment books are found again.
+
+</details>
+
+<details>
 <summary><strong>Code highlight:</strong> semantic similarity scoring with embeddings</summary>
 
 ```python
