@@ -60,6 +60,46 @@ Both the website and the API depend on it, so they can never drift out of sync �
 
 *Tech: Python, Pydantic v2, SQLAlchemy 2.0, PostgreSQL.*
 
+<details>
+<summary><strong>Code highlight:</strong> resilient SQLAlchemy engine for a cloud database</summary>
+
+```python
+def create_db_engine(database_url: str | None = None, ssl_enabled: bool = True) -> Engine:
+    """
+    Create a SQLAlchemy engine with optional SSL configuration.
+
+    Args:
+        database_url: Optional database URL. If not provided, uses environment variables.
+        ssl_enabled: Whether to enable SSL verification (default True for production).
+    """
+    url = database_url or get_database_url()
+
+    connect_args = {}
+    if ssl_enabled:
+        ssl_rootcert = os.getenv("SSL_ROOTCERT")
+        if ssl_rootcert:
+            connect_args = {
+                "sslmode": "verify-full",
+                "sslrootcert": ssl_rootcert,
+            }
+
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=1800,
+        pool_timeout=30,
+        connect_args={
+            **connect_args,
+            "connect_timeout": 10,
+            "options": "-c statement_timeout=30000",
+        },
+    )
+```
+
+</details>
+
 ### 2. `skills/` — the data pipeline
 The engine that builds the dataset. For every skill in the platform it queries multiple book APIs
 (Google Books, Open Library), filters out low-quality results, and then uses **semantic AI**
@@ -71,6 +111,91 @@ This is the "hard data" behind the product, and it runs as a containerised batch
 schedule, so the dataset keeps itself current without manual intervention.
 
 *Tech: Scrapy, Cohere (rerank + embeddings), Google Books / Open Library APIs, PostgreSQL, Podman.*
+
+<details>
+<summary><strong>Code highlight:</strong> semantic similarity scoring with embeddings</summary>
+
+```python
+def compute_similarity(skill: Dict, book: Dict) -> float:
+    """Compute semantic similarity between a skill and a book."""
+    co = get_cohere_client()
+
+    skill_text = f"{skill['title']}: {skill['description']}"
+    book_text = f"{book.get('title', '')}: {book.get('description', '')}"
+
+    skill_response = co.embed(texts=[skill_text], model=DEFAULT_MODEL, input_type="search_query")
+    book_response = co.embed(texts=[book_text], model=DEFAULT_MODEL, input_type="search_document")
+
+    skill_embedding = np.array(skill_response.embeddings[0])
+    book_embedding = np.array(book_response.embeddings[0])
+
+    similarity = np.dot(skill_embedding, book_embedding) / (
+        np.linalg.norm(skill_embedding) * np.linalg.norm(book_embedding)
+    )
+    return float(similarity)
+```
+
+</details>
+
+<details>
+<summary><strong>Code highlight:</strong> source-aware book ranking with configurable weights</summary>
+
+```python
+class BookRanker:
+    """Source-aware book ranking with configurable weights."""
+
+    def __init__(self, source: str = "google_books"):
+        self.source = source
+        self.weights = self._get_weights()
+
+    def _get_weights(self) -> Dict:
+        """Get merged weights for the current source."""
+        weights = {
+            "relevance_order": 40,   # Bonus for search result position
+            "recency": 20,           # Max bonus for recent publications
+            "rating_count_cap": 100, # Max rating count contribution
+            "rating_multiplier": 10, # average_rating * this
+            "publisher": 10,
+            "trusted_publisher": 25, # Bonus for reputable publishers
+            "subjects": 5,
+            "educational_subject": 30,  # Bonus for educational/textbook subjects
+        }
+
+        source_weights = {
+            "google_books": {"relevance_order": 40},
+            "open_library": {
+                "relevance_order": 10,
+                "popularity": 30,
+                "edition_count": 15,
+                "subject_match": 25,
+            },
+        }
+
+        weights.update(source_weights.get(self.source, {}))
+        return weights
+
+    def score(self, idx: int, book: Dict) -> float:
+        """Calculate ranking score for a book."""
+        s = 0.0
+        s += max(0, self.weights["relevance_order"] - idx)
+
+        if year := book.get("published_year"):
+            age = datetime.utcnow().year - year
+            s += max(0, self.weights["recency"] - age)
+
+        ratings_count = book.get("ratings_count") or 0
+        average_rating = book.get("average_rating") or 0
+        if ratings_count >= 10:
+            s += min(ratings_count, self.weights["rating_count_cap"])
+            s += average_rating * self.weights["rating_multiplier"]
+
+        relevance = book.get("semantic_relevance_score", 0) or 0
+        s += relevance * 50
+
+        return s
+```
+
+</details>
 
 <p align="center"><img src="assets/semantic.png" alt="Semantic reranking before/after" width="850"></p>
 <p align="center"><em>Semantic reranking in action — raw keyword matches (left) vs. the AI-reranked, genuinely
@@ -151,6 +276,28 @@ Proskiro's data to partners; consumers never hit it directly — they use the `d
 deliberate groundwork investment for a future B2B revenue stream.
 
 *Tech: FastAPI, Python, PostgreSQL (via proskiro-tools).*
+
+<details>
+<summary><strong>Code highlight:</strong> a clean, typed FastAPI route sharing models with the rest of the stack</summary>
+
+```python
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from proskiro_tools import get_db, search_profession, Profession
+
+router = APIRouter(prefix="/profession")
+
+
+@router.get("/{profession_name}", response_model=Profession)
+def get_one(profession_name: str, db: Session = Depends(get_db)):
+    prof = search_profession(db, profession_name)
+    if prof is None:
+        raise HTTPException(status_code=404, detail="Profession not found")
+    return prof
+```
+
+</details>
 
 <p align="center"><img src="assets/skills-api.png" alt="skills-api interactive docs" width="850"></p>
 <p align="center"><em>Auto-generated interactive API documentation, ready for partner integration.</em></p>
