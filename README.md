@@ -197,6 +197,70 @@ class BookRanker:
 
 </details>
 
+<details>
+<summary><strong>Code highlight:</strong> reusable Scrapy item-loader cleaning pipeline</summary>
+
+```python
+def fix_encoding(s):
+    """Fix mojibake and encoding errors (e.g. Â\xa0 → space, â€™ → ')."""
+    if not isinstance(s, str):
+        return s
+    return ftfy.fix_text(s)
+
+
+def remove_white_space(s):
+    if not isinstance(s, str):
+        return s
+    return re.sub(r"\s+", " ", s)
+
+
+def string_strip(s):
+    if not isinstance(s, str):
+        return s
+    return s.strip()
+
+
+def filter_empty(s):
+    if isinstance(s, str):
+        return s or None
+    return s
+
+
+class BaseESCOLoader(ItemLoader):
+    """
+    Base loader for ESCO-related data.
+    Keeps JSON structure intact by default.
+    """
+
+    default_input_processor = MapCompose(
+        fix_encoding, remove_white_space, string_strip, filter_empty
+    )
+    default_output_processor = TakeFirst()
+
+
+class OccupationLoader(BaseESCOLoader):
+    """
+    Loader for OccupationItem.
+    Preserves list fields for skills and hierarchical relationships.
+    """
+
+    default_item_class = OccupationItem
+
+    # Flatten only scalar fields
+    preferred_title_out = TakeFirst()
+    alt_label_out = TakeFirst()
+    description_out = TakeFirst()
+    uri_out = TakeFirst()
+
+    # Preserve structured data fields
+    essential_skills_out = Identity()
+    optional_skills_out = Identity()
+    narrower_concept_out = Identity()
+    broader_isco_group_uri_out = Identity()
+```
+
+</details>
+
 <p align="center"><img src="assets/semantic.png" alt="Semantic reranking before/after" width="850"></p>
 <p align="center"><em>Semantic reranking in action — raw keyword matches (left) vs. the AI-reranked, genuinely
 relevant results actually shown to users (right).</em></p>
