@@ -17,7 +17,7 @@ each project is and — more importantly — **how they work together**.
 
 ```mermaid
 graph TD
-    infra["<b>infra/</b><br/>Terraform IaC<br/>Provisions VPC, RDS, ECS, S3, SES, Secrets Manager"]
+    infra["<b>infra/</b><br/>AWS foundation<br/>VPC, RDS, ECS, S3, SES, Secrets Manager<br/><i>(Terraform IaC underway)</i>"]
     data["ESCO + O*NET taxonomy<br/><i>(external open data)</i>"]
     skills["<b>skills/</b><br/>Data pipeline (offline / batch)<br/>Scrapes, enriches &amp; semantically ranks books &amp; skills"]
     db[("PostgreSQL on AWS RDS<br/><i>single source of truth</i>")]
@@ -43,8 +43,8 @@ graph TD
 The key design decision: **one database, one shared data layer, many consumers.** The data pipeline
 writes; the web app and API read. Neither the API nor the website re-implements how a "profession"
 or a "skill" is shaped — that lives once in `proskiro-tools` and everything imports it. Underneath
-all of it, `infra` provisions and wires together the actual AWS services every other project depends
-on to run.
+all of it, `infra` is where the actual AWS services every other project depends on to run are wired
+together.
 
 ---
 
@@ -495,7 +495,7 @@ django           python manage.py test --verbosity=2
 
 ## How a request actually flows
 
-0. **Underneath everything:** `infra` has already provisioned the VPC, RDS database, ECS compute, S3, SES, and secrets that the rest of the stack runs on.
+0. **Underneath everything:** the AWS foundation — VPC, RDS database, ECS compute, S3, SES, and secrets — that the rest of the stack runs on.
 1. **Offline:** the `skills` pipeline runs automatically on a schedule, populating PostgreSQL with professions, ranked skills, and AI-vetted book recommendations.
 2. **A visitor** lands on a profession page on the `django` site (often via an AI-written blog article built for SEO).
 3. `django` reads the profession and its skills through `proskiro-tools`, and renders the page.
@@ -521,4 +521,4 @@ django           python manage.py test --verbosity=2
 | `skills` | Data pipeline (books + taxonomy), runs on an automated schedule | Scrapy, Cohere, Google Books / Open Library |
 | `skills-api` | REST API over the data (B2B expansion, not consumer-facing) | FastAPI |
 | `django` | Public site, CMS, AI blog, email funnel (AI-assisted build) | Django, Wagtail, Claude, AWS SES/S3 |
-| `infra` | Provisions the AWS foundation (VPC, RDS, ECS, S3, SES, Secrets Manager) | Terraform, AWS |
+| `infra` | The AWS foundation (VPC, RDS, ECS, S3, SES, Secrets Manager); Terraform IaC migration in progress | AWS, Terraform |
