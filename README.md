@@ -448,11 +448,15 @@ public profession pages and also runs the marketing side of the business:
 <p align="center"><em>Email lifecycle analytics — open/click tracking and conversion attribution for the roadmap funnel.</em></p>
 
 ### 5. `infra/` — the infrastructure
-**Terraform** infrastructure-as-code that provisions the entire AWS foundation the platform runs on,
-split into separate `staging` and `production` environments with reusable modules. It's the layer
-underneath every other project — nothing above it runs without it.
+**Terraform** infrastructure-as-code for the AWS foundation the platform runs on, split into separate
+`staging` and `production` environments with reusable modules.
 
-It provisions:
+> **Status: work in progress.** The production AWS environment was originally built directly via the
+> AWS CLI and Console, and this Terraform project is an active effort to bring that infrastructure
+> under IaC — it's a skill I'm deliberately building rather than a finished, battle-tested setup.
+> Modules below reflect the target state; not all of them are fully applied against production yet.
+
+It's intended to provision:
 
 - **VPC & networking** — the private network the platform's cloud resources live in, with security groups controlling exactly what can talk to what.
 - **RDS (PostgreSQL)** — the shared, private database behind `proskiro-tools`, `django`, and `skills-api`. Not publicly reachable; only trusted resources inside the VPC can connect.
